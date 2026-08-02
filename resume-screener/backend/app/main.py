@@ -1,6 +1,8 @@
+import os
+from typing import List, Optional
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
 
 from app.parser import extract_text, clean_text
 from app.scoring import compute_score
@@ -9,10 +11,18 @@ from app.models import StudentAnalyzeResponse, RecruiterRankResponse, RankedCand
 
 app = FastAPI(title="Resume Screening & Ranking API")
 
-# Allow the React dev server to call this API. Tighten this before deploying.
+origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+]
+
+frontend_url = os.environ.get("FRONTEND_URL")
+if frontend_url:
+    origins.append(frontend_url)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -33,10 +43,6 @@ async def student_analyze(
     jd_text: str = Form(...),
     role_hint: Optional[str] = Form(None),
 ):
-    """
-    Student flow: upload one resume + paste JD text.
-    Returns score out of 10 + step-by-step improvement feedback.
-    """
     resume_text = await _read_and_clean(resume)
     score_data = compute_score(resume_text, jd_text)
     feedback = generate_feedback(score_data, jd_role_hint=role_hint or "")
@@ -61,14 +67,12 @@ async def recruiter_rank(
     jd_text: str = Form(...),
     role_hint: Optional[str] = Form(None),
 ):
-    """
-    Recruiter flow: upload JD + many resumes.
-    Returns candidates ranked by score, highest first.
-    """
     candidates = []
+
     for resume in resumes:
         resume_text = await _read_and_clean(resume)
         score_data = compute_score(resume_text, jd_text)
+
         candidates.append(
             RankedCandidate(
                 ats_readiness=score_data["ats_readiness"],
@@ -81,7 +85,10 @@ async def recruiter_rank(
         )
 
     candidates.sort(key=lambda c: c.total_score, reverse=True)
-    return RecruiterRankResponse(jd_role_hint=role_hint, candidates=candidates)
+    return RecruiterRankResponse(
+        jd_role_hint=role_hint,
+        candidates=candidates,
+    )
 
 
 @app.get("/api/health")
